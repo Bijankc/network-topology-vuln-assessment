@@ -13,6 +13,7 @@ topology:
       exec:
         - ip addr add 10.10.10.1/24 dev eth1
         - ip addr add 10.10.0.1/30 dev eth2
+        - ip route add 10.10.20.0/24 via 10.10.0.2
 
     r2:
       kind: linux
@@ -21,6 +22,7 @@ topology:
         net.ipv4.ip_forward: 1
       exec:
         - ip addr add 10.10.0.2/30 dev eth1
+        - ip addr add 10.10.20.1/24 dev eth2
         - ip route add 10.10.10.0/24 via 10.10.0.1
 
     scanner:
@@ -31,6 +33,30 @@ topology:
         - ip addr add 10.10.10.10/24 dev eth1
         - ip route add 10.10.0.0/16 via 10.10.10.1  # lab traffic only; default route stays on eth0
 
+    # Layer-2 switch for the server network. It is a Linux bridge on the host,
+    # created beforehand by lab/bridge.sh (needs root).
+    br-servers:
+      kind: bridge
+
+    msf2:
+      kind: linux
+      image: tleemcjr/metasploitable2:latest@sha256:e559450b37dccc1909eafa2df5b20bb052e1bd801246f4539a3ef183d5f7288a
+      # Start the image's services, minus "networking" (it would run DHCP on eth0),
+      # then keep a foreground process alive so the container keeps running.
+      cmd: sh -c "grep -v networking /bin/services.sh | sh; exec tail -f /dev/null"
+      exec:
+        - ip addr add 10.10.20.10/24 dev eth1
+        - ip route add 10.10.0.0/16 via 10.10.20.1
+
+    # This image has no `ip` command, so lab/post-deploy.sh sets its
+    # address (10.10.20.20/24) and route from the host instead.
+    httpd:
+      kind: linux
+      image: vulhub/httpd:2.4.49@sha256:a6c32432b1ed40818488e238769e962a4151ef3b74b54416d9d5d396ba8cab5f
+
   links:
     - endpoints: ["scanner:eth1", "r1:eth1"]
     - endpoints: ["r1:eth2", "r2:eth1"]
+    - endpoints: ["r2:eth2", "br-servers:srv-r2"]
+    - endpoints: ["msf2:eth1", "br-servers:srv-msf2"]
+    - endpoints: ["httpd:eth1", "br-servers:srv-httpd"]
