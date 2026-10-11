@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read # gitleaks lists PR commits
+
+jobs:
+  # Decide which parts of the repo exist; missing parts skip their job.
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      lab: ${{ steps.check.outputs.lab }}
+      backend: ${{ steps.check.outputs.backend }}
+      frontend: ${{ steps.check.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: check
+        run: |
+          echo "lab=$([ -n "$(find lab -name '*.yml' -o -name '*.yaml')" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "backend=$([ -f backend/pyproject.toml ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "frontend=$([ -f frontend/package.json ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  secrets:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@e0c47f4f8be36e29cdc102c57e68cb5cbf0e8d1e # v3.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  lab:
+    needs: detect
+    if: needs.detect.outputs.lab == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: pip install yamllint==1.38.0
+      - run: yamllint lab/
+
+  backend:
+    needs: detect
+    if: needs.detect.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          python-version: "3.12"
+      - run: uvx ruff check .
+      - run: uvx ruff format --check .
+      - run: uv run --with pytest pytest || [ $? -eq 5 ] # exit 5 = no tests collected yet
+
+  frontend:
+    needs: detect
+    if: needs.detect.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
